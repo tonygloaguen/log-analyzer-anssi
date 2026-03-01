@@ -1,0 +1,26 @@
+# Secrets et configuration locale
+.env.local
+.env
+*.key
+*.pem
+certs/
+!certs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+
+# Docker
+.docker/
+
+# Données locales
+/tmp/log-analyzer*/

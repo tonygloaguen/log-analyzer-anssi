@@ -1,0 +1,245 @@
+---
+# docker-compose.yml — log-analyzer-anssi
+# Conforme ANSSI : TLS mutuel, partition dédiée, NTP synchronisé, rétention configurable
+
+version: "3.9"
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-ntp-config: &ntp-config
+  sysctls:
+    net.ipv4.conf.all.src_valid_mark: 1
+
+networks:
+  collect-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  analyze-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+  storage-net:
+    driver: bridge
+
+volumes:
+  log-analyzer-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /tmp/log-analyzer  # En prod : partition dédiée /var/log-analyzer
+  postgres-data:
+  loki-data:
+  grafana-data:
+  ollama-data:
+  certs:
+
+services:
+  # ─────────────────────────────────────────────
+  # NTP (synchronisation temporelle ANSSI)
+  # ─────────────────────────────────────────────
+  ntp:
+    image: cturra/ntp:latest
+    container_name: log-ntp
+    restart: always
+    ports:
+      - "123:123/udp"
+    environment:
+      - NTP_SERVERS=pool.ntp.org,time.cloudflare.com
+    cap_add:
+      - SYS_TIME
+    networks:
+      - collect-net
+      - analyze-net
+    logging: *default-logging
+
+  # ─────────────────────────────────────────────
+  # PostgreSQL + pgvector (stockage structuré + vectoriel)
+  # ─────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: log-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-log_analyzer}
+      POSTGRES_USER: ${POSTGRES_USER:-loguser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    networks:
+      - storage-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loguser} -d ${POSTGRES_DB:-log_analyzer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    # ANSSI : pas d'exposition port externe en production
+    # ports: ["5432:5432"]  # Décommenter uniquement pour debug local
+
+  # ─────────────────────────────────────────────
+  # Loki (stockage et indexation logs bruts)
+  # ─────────────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: log-loki
+    restart: always
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+      - ./config/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - certs:/certs:ro
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - collect-net
+      - analyze-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ─────────────────────────────────────────────
+  # Fluent Bit (collecte avec TLS mutuel ANSSI)
+  # ─────────────────────────────────────────────
+  fluent-bit:
+    image: fluent/fluent-bit:3.0
+    container_name: log-fluent-bit
+    restart: always
+    volumes:
+      - ./config/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./config/fluent-bit-parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - log-analyzer-data:/var/log-analyzer
+      - certs:/certs:ro
+    networks:
+      - collect-net
+    depends_on:
+      loki:
+        condition: service_healthy
+      ntp:
+        condition: service_started
+    logging: *default-logging
+
+  # ─────────────────────────────────────────────
+  # Ollama + Mistral 7B (LLM local — pas de cloud)
+  # ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: log-ollama
+    restart: always
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - analyze-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    logging: *default-logging
+    # Décommenter pour GPU NVIDIA :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: log-ollama-init
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - analyze-net
+    command: >
+      sh -c "curl -sf http://ollama:11434/api/pull
+      -d '{\"name\": \"mistral:7b-instruct\"}'
+      --max-time 600"
+    logging: *default-logging
+
+  # ─────────────────────────────────────────────
+  # API FastAPI (orchestration et rapports)
+  # ─────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: log-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://${POSTGRES_USER:-loguser}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-log_analyzer}
+      - LOKI_URL=http://loki:3100
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - HMAC_SECRET_KEY=${HMAC_SECRET_KEY:?HMAC_SECRET_KEY required}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-90}
+      - ANOMALY_THRESHOLD=${ANOMALY_THRESHOLD:-0.75}
+      - TLS_CERT_PATH=/certs/server.crt
+      - TLS_KEY_PATH=/certs/server.key
+      - TLS_CA_PATH=/certs/ca.crt
+    volumes:
+      - log-analyzer-data:/var/log-analyzer
+      - certs:/certs:ro
+    networks:
+      - analyze-net
+      - storage-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ─────────────────────────────────────────────
+  # Grafana (dashboards)
+  # ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: log-grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?GRAFANA_PASSWORD required}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_SERVER_ENABLE_GZIP=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - analyze-net
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging: *default-logging

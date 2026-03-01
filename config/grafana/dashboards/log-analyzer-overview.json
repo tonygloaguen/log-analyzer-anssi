@@ -1,0 +1,90 @@
+{
+  "title": "Log Analyzer ANSSI — Vue d'ensemble",
+  "uid": "log-analyzer-overview",
+  "version": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Score de risque global",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT MAX(overall_risk_score) as score FROM analysis_reports WHERE created_at > NOW() - INTERVAL '1 hour'",
+        "format": "table"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 0.4, "color": "yellow" },
+              { "value": 0.75, "color": "red" }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Anomalies par type (1h)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "datasource": "Loki",
+      "targets": [{
+        "expr": "sum by (anomaly_type) (count_over_time({job=~\".+\"} |= \"anomaly\" [1h]))",
+        "legendFormat": "{{anomaly_type}}"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Escalades humaines",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) as escalations FROM analysis_reports WHERE status = 'escalated' AND created_at > NOW() - INTERVAL '24 hours'",
+        "format": "table"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 1, "color": "orange" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Volume de logs collectés",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": "Loki",
+      "targets": [{
+        "expr": "sum(rate({job=~\".+\"}[5m])) by (job)",
+        "legendFormat": "{{job}}"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Logs récents avec anomalies",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "datasource": "Loki",
+      "targets": [{
+        "expr": "{job=~\".+\"} |= \"anomaly\" or |= \"error\" or |= \"critical\" | json",
+        "legendFormat": ""
+      }]
+    }
+  ]
+}

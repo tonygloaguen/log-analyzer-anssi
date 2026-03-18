@@ -1,0 +1,193 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# CI Pipeline — log-analyzer-anssi
+# DevSecOps : tests + couverture + SAST + scan vulnérabilités dépendances
+#
+# Contrôles NIS2 : NIS2-CI-01 (CI pipeline), NIS2-CI-02 (SAST), NIS2-SC-01 (pip-audit)
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "claude/**", "feat/**", "fix/**"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1 : Tests unitaires et d'intégration + couverture
+  # ─────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests & Coverage
+    runs-on: ubuntu-latest
+
+    env:
+      HMAC_SECRET_KEY: "ci-test-hmac-key-for-unit-tests-32bytes!"
+      POSTGRES_DSN: "postgresql+asyncpg://test:test@localhost/test"
+      LOKI_URL: "http://loki-test:3100"
+      OLLAMA_BASE_URL: "http://ollama-test:11434"
+      LOG_RETENTION_DAYS: "7"
+      ANOMALY_THRESHOLD: "0.75"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest-cov
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=75 \
+            -v
+
+      - name: Run integration tests (Ollama mocké)
+        run: pytest tests/integration/ -v
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2 : Type checking strict
+  # ─────────────────────────────────────────────────────────────────────────────
+  typecheck:
+    name: Type Check (mypy --strict)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt mypy
+
+      - name: Run mypy strict
+        run: mypy src/ --strict --ignore-missing-imports
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3 : SAST — Analyse statique de sécurité (NIS2-CI-02)
+  # ─────────────────────────────────────────────────────────────────────────────
+  sast:
+    name: SAST (bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit SAST
+        # -ll : signaler uniquement HIGH et MEDIUM
+        # -ii : confidence HIGH et MEDIUM uniquement
+        # Échec CI si findings HIGH/CRITICAL
+        run: |
+          bandit -r src/ \
+            -ll -ii \
+            --format json \
+            --output bandit-report.json || true
+          bandit -r src/ -ll -ii
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 4 : Scan vulnérabilités dépendances (NIS2-SC-01)
+  # ─────────────────────────────────────────────────────────────────────────────
+  dependency-scan:
+    name: Dependency Scan (pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        # Bloquant si CVE avec CVSS >= 7.0 (HIGH ou CRITICAL)
+        run: |
+          pip install -r requirements.txt
+          pip-audit \
+            --format json \
+            --output pip-audit-report.json || true
+          pip-audit
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 5 : Vérification de conformité locale
+  # ─────────────────────────────────────────────────────────────────────────────
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check .env.example completeness
+        run: |
+          echo "Vérification que .env.example est présent..."
+          test -f .env.example || (echo "ERREUR: .env.example manquant" && exit 1)
+          echo "OK: .env.example présent"
+
+      - name: Check NIS2 documentation
+        run: |
+          echo "Vérification de la documentation NIS2..."
+          test -f docs/nis2/nis2-control-matrix.csv || (echo "ERREUR: matrice de contrôles manquante" && exit 1)
+          test -f docs/nis2/nis2-gap-analysis.md || (echo "ERREUR: gap analysis manquante" && exit 1)
+          echo "OK: documentation NIS2 présente"
+
+      - name: Install compliance scripts dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run env vars check
+        env:
+          HMAC_SECRET_KEY: "ci-test-hmac-key-for-unit-tests-32bytes!"
+          POSTGRES_DSN: "postgresql+asyncpg://test:test@localhost/test"
+          LOKI_URL: "http://loki-test:3100"
+        run: |
+          python scripts/compliance/check_env_vars.py --env-file .env.example --check-example

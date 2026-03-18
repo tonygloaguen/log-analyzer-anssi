@@ -51,12 +51,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifecycle : initialisation et nettoyage de l'application."""
     logger.info("Démarrage log-analyzer-anssi API", version="1.0.0")
 
-    # Vérifier que les variables critiques sont définies
-    required_env = ["HMAC_SECRET_KEY"]
+    # Vérifier que les variables critiques sont définies (NIS2-SEC-01)
+    required_env = ["HMAC_SECRET_KEY", "POSTGRES_DSN", "LOKI_URL"]
     missing = [v for v in required_env if not os.getenv(v)]
     if missing:
         logger.error("Variables d'environnement manquantes", missing=missing)
         raise RuntimeError(f"Variables obligatoires non définies: {missing}")
+
+    # Vérifier que la clé HMAC a une longueur suffisante (32 bytes minimum)
+    hmac_key = os.getenv("HMAC_SECRET_KEY", "")
+    if len(hmac_key) < 32:
+        logger.error("HMAC_SECRET_KEY trop courte", length=len(hmac_key), minimum=32)
+        raise RuntimeError(
+            f"HMAC_SECRET_KEY trop courte: {len(hmac_key)} caractères (minimum 32)"
+        )
 
     logger.info(
         "Configuration chargée",

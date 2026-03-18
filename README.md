@@ -226,6 +226,58 @@ log-analyzer-anssi/
 
 ---
 
+## NIS2 / DevSecOps — Implementation Status
+
+> Documentation complète dans [`docs/nis2/`](docs/nis2/).
+
+### Ce que le repo couvre déjà
+
+| Domaine | Mécanisme | Statut |
+|---|---|---|
+| Journalisation & intégrité | HMAC-SHA256 sur archives gzip, rotation, rétention | Couvert |
+| Détection d'anomalies | 7 patterns IOC + score de risque [0–1] + LLM local | Couvert |
+| Transport chiffré | mTLS Fluent Bit → Loki (input) | Couvert |
+| Traçabilité | `audit_events` dans chaque nœud LangGraph + table `audit_trail` SQL | Couvert |
+| Escalade incidents | Routage conditionnel auto / humain selon seuil configurable | Couvert |
+| Séparation des rôles | Réseaux Docker isolés collect / analyze / storage | Couvert |
+| Synchronisation temporelle | Service NTP dédié dans Docker Compose | Couvert |
+| Secrets obligatoires | Variables `:?` dans compose + vérification au boot FastAPI | Couvert |
+| Container non-root | `appuser` dans Dockerfile | Couvert |
+| Logging structuré | `structlog` JSON — compatible SIEM | Couvert |
+
+### Ce qu'il reste à implémenter (priorités)
+
+| # | Action | Priorité | Phase |
+|---|---|---|---|
+| P1.1 | Persister les rapports en PostgreSQL (remplacer `_reports_store` mémoire) | Critique | 1 |
+| P1.2 | Corriger `tls.verify Off` → `On` sur output Fluent Bit | Critique | 1 |
+| P1.3 | Créer `.env.example` avec toutes les variables documentées | Critique | 1 |
+| P1.4 | Ajouter pipeline CI/CD (tests + pip-audit + bandit) | Critique | 1–2 |
+| P1.5 | Scan vulnérabilités dépendances (`pip-audit`) | Critique | 2 |
+| P2.1 | Connecter `insert_audit_event` depuis l'API | Important | 1 |
+| P2.2 | Script de sauvegarde PostgreSQL chiffré | Important | 4 |
+| P2.3 | Notification webhook sur escalade | Important | 3 |
+| P3.1 | Row Level Security sur `audit_trail` | Souhaitable | 3 |
+| P3.2 | SBOM (Software Bill of Materials) | Souhaitable | 5 |
+
+### Couverture NIS2 par thème
+
+```
+Journalisation / détection    ████████░░  80%
+Contrôle d'accès / secrets    █████░░░░░  50%
+Hygiène cyber                 ██████░░░░  60%
+Développement sécurisé        █████░░░░░  50%
+Gestion incidents             ████░░░░░░  40%
+Continuité / sauvegarde       ██░░░░░░░░  20%
+Supply chain                  █░░░░░░░░░  10%
+Gouvernance                   ██░░░░░░░░  20%
+```
+
+**Note** : Ce projet est un démonstrateur technique, non un produit certifié NIS2.
+Voir [`docs/nis2/README.md`](docs/nis2/README.md) pour les hypothèses et limites.
+
+---
+
 ## Licence
 
 MIT — Voir `LICENSE`

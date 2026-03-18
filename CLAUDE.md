@@ -122,3 +122,80 @@ curl -X POST http://localhost:8000/analyze \
 - Les certificats TLS de prod sont dans `/certs/` (hors git)
 - La clé HMAC doit être stockée dans un HSM ou gestionnaire de secrets en production
 - Revue obligatoire pour tout changement dans `src/collectors/integrity.py`
+
+---
+
+## Règles de contribution NIS2/DevSecOps
+
+### Debug strategy — Règle globale
+
+**Avant tout patch**, trace l'exécution logique ligne par ligne, identifie le point
+de divergence, propose ensuite le fix. Ne jamais patcher sans avoir identifié
+la cause racine.
+
+### Preuves de sécurité obligatoires
+
+Toute mesure déclarée "NIS2" ou "ANSSI" doit pointer vers **au moins trois** des
+quatre preuves suivantes :
+
+| Type de preuve | Exemples |
+|---|---|
+| **Code** | Fonction implémentée, logique métier, validation |
+| **Configuration** | Paramètre Docker Compose, fichier config service |
+| **Test** | Test unitaire ou d'intégration qui échoue si la mesure est retirée |
+| **Documentation** | Référence dans `docs/nis2/` avec numéro de contrôle |
+
+Ne jamais marquer un contrôle comme `covered` dans `docs/nis2/nis2-control-matrix.csv`
+sans compléter les colonnes `evidence_files`, `code_refs` et `test_refs`.
+
+### Impact sécurité obligatoire sur les nouvelles fonctionnalités
+
+Toute nouvelle fonctionnalité doit documenter dans sa PR :
+
+1. **Impact sécurité** : neutre / améliore / dégrade la surface d'attaque
+2. **Contrôle NIS2 impacté** : référencer le `control_id` si applicable
+3. **Test de non-régression** : au moins un test validant le comportement sécurité
+
+### Fichiers à revue obligatoire avant merge
+
+| Fichier | Raison |
+|---|---|
+| `src/collectors/integrity.py` | Logique HMAC — intégrité des logs |
+| `src/langgraph_pipeline/conditions.py` | Logique de routage incidents |
+| `docker-compose.yml` | Configuration réseau, secrets, healthchecks |
+| `config/fluent-bit.conf` | Configuration TLS transport |
+| `scripts/init_db.sql` | Schéma `audit_trail` — immuabilité |
+
+### Mise à jour documentation NIS2
+
+À chaque modification impactant un contrôle de sécurité :
+
+1. Mettre à jour `docs/nis2/nis2-control-matrix.csv` (colonne `repo_status`)
+2. Mettre à jour `docs/nis2/nis2-gap-analysis.md` si l'écart est résolu
+3. Mettre à jour la section "NIS2/DevSecOps" du `README.md` si le niveau de couverture change
+
+### Conventions de commit DevSecOps
+
+```
+docs(nis2): <description>       — documentation NIS2/conformité
+feat(security): <description>   — nouvelle mesure de sécurité
+fix(security): <description>    — correction d'une faiblesse sécurité
+test(security): <description>   — test de non-régression sécurité
+feat(compliance): <description> — outillage conformité/audit
+fix(docker): <description>      — correction configuration Docker
+chore(ci): <description>        — pipeline CI/CD
+```
+
+Un commit par fichier ou groupe logique cohérent. Pas de mega-commit.
+
+### Principe de minimalité et auditabilité
+
+- Changements minimaux mais **auditables** — chaque changement doit être explicable
+- Pas de refactoring opportuniste dans une PR de sécurité
+- Commenter toute exception à une règle de sécurité avec sa justification
+  et sa condition de levée
+
+```python
+# DEV ONLY — activer tls.verify On en production (voir NIS2-TLS-02)
+tls.verify Off
+```

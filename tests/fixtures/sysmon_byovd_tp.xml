@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture : Sysmon EventID 6 — VRAI POSITIF (True Positive)
+  Pilote   : RTCore64.sys (Micro-Star MSI Afterburner)
+  CVE      : CVE-2019-16098
+  Hash     : SHA-256 connu dans loldrivers.io
+  Usage    : Chargement de pilote vulnérable utilisé par BYOVD (ex. Lazarus Group)
+  Source   : https://loldrivers.io/drivers/RTCore64/
+-->
+<Events>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385f-c22a-43e0-bf4c-06f5698ffbd9}"/>
+      <EventID>6</EventID>
+      <Version>3</Version>
+      <Level>4</Level>
+      <Task>6</Task>
+      <Opcode>0</Opcode>
+      <Keywords>0x8000000000000000</Keywords>
+      <TimeCreated SystemTime="2024-03-15T02:17:42.123456789Z"/>
+      <EventRecordID>42001</EventRecordID>
+      <Correlation/>
+      <Execution ProcessID="4" ThreadID="120"/>
+      <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+      <Computer>WORKSTATION-01</Computer>
+      <Security UserID="S-1-5-18"/>
+    </System>
+    <EventData>
+      <Data Name="RuleName">-</Data>
+      <Data Name="UtcTime">2024-03-15 02:17:42.123</Data>
+      <Data Name="ImageLoaded">C:\Windows\System32\drivers\RTCore64.sys</Data>
+      <Data Name="Hashes">MD5=2D8E4F38B36C334D0A32A7324832501D,SHA256=01AA278B07B58DC46A4D4C8A7F26C44BE67B16E0A50E4A4EFDE92D52A21DA9B6,IMPHASH=NONE</Data>
+      <Data Name="Signed">true</Data>
+      <Data Name="Signature">Micro-Star International</Data>
+      <Data Name="SignatureStatus">Valid</Data>
+    </EventData>
+  </Event>
+</Events>

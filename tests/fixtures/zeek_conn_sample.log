@@ -1,0 +1,20 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	conn
+#open	2024-03-15-02-17-42
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	proto	service	duration	orig_bytes	resp_bytes	conn_state	local_orig	local_resp	missed_bytes	history	orig_pkts	orig_ip_bytes	resp_pkts	resp_ip_bytes	tunnel_parents
+#types	time	string	addr	port	addr	port	enum	string	interval	count	count	string	bool	bool	count	string	count	count	count	count	set[string]
+# Sample nominal — connexion HTTP interne légitime
+1710468862.000000	Cj0Nrc3LkZGjrj9kf	192.168.1.10	54321	10.0.0.5	80	tcp	http	0.123456	512	2048	SF	T	T	0	ShADadFf	8	864	12	2400	(empty)
+# Sample suspect — scan de port (conn_state=S0 = SYN sans réponse)
+1710468863.100000	Ck1Abc4MlZHksk0lg	10.0.5.200	60001	192.168.1.10	22	tcp	-	-	0	0	S0	F	T	0	S	1	60	0	0	(empty)
+1710468863.200000	Ck1Abc4MlZHksk0lh	10.0.5.200	60002	192.168.1.10	23	tcp	-	-	0	0	S0	F	T	0	S	1	60	0	0	(empty)
+1710468863.300000	Ck1Abc4MlZHksk0li	10.0.5.200	60003	192.168.1.10	3389	tcp	-	-	0	0	S0	F	T	0	S	1	60	0	0	(empty)
+# Sample exfiltration potentielle — transfert sortant massif
+1710468870.000000	Cm2Def5NmAIlmk1mh	192.168.1.50	49152	203.0.113.42	443	tcp	ssl	45.678901	0	8388608	SF	T	F	0	ShADadFf	1024	8389632	5120	8392704	(empty)
+# Sample mouvement latéral — SMB interne
+1710468875.000000	Cn3Ghi6OnBJmmk2ni	192.168.1.50	49153	192.168.1.20	445	tcp	smb	2.345678	4096	16384	SF	T	T	0	ShADadFf	32	5248	64	17536	(empty)
+1710468875.500000	Cn3Ghi6OnBJmmk2nj	192.168.1.50	49154	192.168.1.30	445	tcp	smb	1.234567	4096	16384	SF	T	T	0	ShADadFf	32	5248	64	17536	(empty)
+#close	2024-03-15-02-18-00

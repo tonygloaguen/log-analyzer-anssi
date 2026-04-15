@@ -102,13 +102,21 @@ deploy-rpi:
 	    --exclude='.env' --exclude='data/loldrivers_cache.json' \
 	    --exclude='ntfy-data/' --exclude='logs/' \
 	    ./ $(RPI_HOST):$(RPI_DEST)/
+	@echo "$(CYAN)▶ Configuration swap 2 Go (endurance SD optimisée)...$(RESET)"
+	ssh $(RPI_HOST) "sudo dphys-swapfile swapoff 2>/dev/null || true && \
+	    sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile && \
+	    sudo dphys-swapfile setup && sudo dphys-swapfile swapon && \
+	    free -h | grep Swap"
+	@echo "$(CYAN)▶ Démarrage des services Docker...$(RESET)"
 	ssh $(RPI_HOST) "cd $(RPI_DEST) && \
 	    docker compose pull ollama ntfy && \
-	    docker compose up -d --build && \
-	    docker compose exec ollama ollama pull granite3.3:8b"
+	    docker compose up -d --build"
+	@echo "$(CYAN)▶ Téléchargement du modèle LLM (granite3.1:2b, ~1 Go)...$(RESET)"
+	ssh $(RPI_HOST) "docker exec log-ollama ollama pull granite3.1:2b"
 	@echo "$(GREEN)Déploiement terminé sur $(RPI_HOST).$(RESET)"
 	@echo "$(CYAN)  ntfy   → http://$(RPI_HOST):8080$(RESET)"
 	@echo "$(CYAN)  ollama → http://$(RPI_HOST):11434$(RESET)"
+	@echo "$(CYAN)  Mémoire : docker stats --no-stream$(RESET)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 ## clean : Supprimer les artefacts générés (htmlcov, rapports, caches Python)

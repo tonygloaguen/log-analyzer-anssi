@@ -1,6 +1,14 @@
 ---
 # docker-compose.yml — log-analyzer-anssi
-# Cible : Raspberry Pi 4 (ARM64, 4 Go RAM)
+# Cible : Raspberry Pi 4 (ARM64, 4 Go RAM, SD 128 Go)
+# Budget mémoire (hors OS ~800 Mo) :
+#   siem   → 512 Mo
+#   ntfy   → 128 Mo
+#   ollama → 2 Go  (granite3.1:2b Q4_K_M ≈ 1.5 Go VRAM)
+#   ─────────────────
+#   total  ≈ 2.6 Go  +  ~1.8 Go OS/Docker  =  ~4.4 Go
+#   → swap 2 Go recommandé (CONF_SWAPSIZE=2048) — pas 4 Go (endurance SD)
+#
 # Conformité ANSSI NIS2 Art.21.2.h — LLM local, pas de cloud
 
 version: "3.9"
@@ -8,8 +16,8 @@ version: "3.9"
 x-logging: &default-logging
   driver: "json-file"
   options:
-    max-size: "10m"
-    max-file: "5"
+    max-size: "5m"
+    max-file: "3"
 
 volumes:
   ollama-data:
@@ -36,14 +44,23 @@ services:
         condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import app; print('ok')"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 15s
       retries: 3
-      start_period: 60s
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
     logging: *default-logging
 
   # ─────────────────────────────────────────────
   # ntfy — notifications push auto-hébergées
+  # Données persistées en volume local (pas tmpfs —
+  # les abonnements et le cache doivent survivre au redémarrage)
   # ─────────────────────────────────────────────
   ntfy:
     image: binwiederhier/ntfy:latest
@@ -55,13 +72,29 @@ services:
     volumes:
       - ./ntfy-data:/var/lib/ntfy
     command: serve
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
     logging: *default-logging
 
   # ─────────────────────────────────────────────
-  # Ollama — LLM local granite3.3:8b (ARM64 Q4_K_M)
-  # 4 Go swap requis : sudo dphys-swapfile swapoff &&
-  #   sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=4096/' /etc/dphys-swapfile &&
+  # Ollama — LLM local
+  # Modèle par défaut : granite3.1:2b (Q4_K_M, ~1.5 Go RAM)
+  # Compatible 4 Go RAM sans swap critique.
+  #
+  # Swap recommandé (2 Go, pas 4 Go — endurance SD) :
+  #   sudo dphys-swapfile swapoff
+  #   sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
   #   sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+  #
+  # Alternatives si RAM insuffisante :
+  #   llama3.2:1b  →  ~0.9 Go  (précision réduite)
+  #   granite3.1:2b → ~1.5 Go  (recommandé — bon rapport qualité/RAM)
+  #   phi3.5:mini  →  ~2.3 Go  (meilleure précision, limite swap 2 Go)
   # ─────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
@@ -74,10 +107,19 @@ services:
       - ollama-data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
+      # Limiter le contexte pour réduire la pression mémoire
+      - OLLAMA_NUM_CTX=2048
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/version || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 2500M
+          cpus: "2.0"
+        reservations:
+          memory: 1500M
     logging: *default-logging

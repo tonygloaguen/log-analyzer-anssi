@@ -1,7 +1,7 @@
 # log-analyzer-anssi
 
 SIEM léger de détection BYOVD/ransomware pour Raspberry Pi 4 (ARM64).
-Conforme ANSSI · NIS2 Art.21 · LLM 100% local (granite3.3:8b via Ollama).
+Conforme ANSSI · NIS2 Art.21 · LLM 100% local (granite3.1:2b via Ollama).
 
 ---
 
@@ -22,7 +22,7 @@ Sysmon XML / auditd / Zeek conn.log
                ▼
 ┌─────────────────────────────────────────────────────┐
 │  nodes/ransomware_behavior_analyst (LangGraph)       │
-│  httpx → Ollama granite3.3:8b  (timeout 30s)        │
+│  httpx → Ollama granite3.1:2b  (timeout 30s)        │
 │  fallback statique si Ollama KO                     │
 │  SQLite checkpoint · HMAC-SHA256 signature          │
 └──────────────┬──────────────────────────────────────┘
@@ -81,16 +81,29 @@ Sysmon XML / auditd / Zeek conn.log
 - Docker 24+ et Docker Compose v2 installés
 - SSH configuré : `gloaguen@192.168.1.31`
 
-### 1. Swap 4 Go (requis pour granite3.3:8b)
+### 1. Choix du modèle LLM
+
+Budget RAM disponible sur RPi 4 (4 Go) après OS + Docker :
+
+| Modèle | RAM Q4_K_M | Swap requis | Recommandation |
+|---|---|---|---|
+| `llama3.2:1b` | ~0.9 Go | non | minimal, précision faible |
+| **`granite3.1:2b`** | **~1.5 Go** | **non** | **recommandé** |
+| `phi3.5:mini` | ~2.3 Go | 2 Go | si plus de précision souhaitée |
+| `granite3.3:8b` | ~5.0 Go | 4 Go+ | déconseillé SD (wear) |
+
+### 2. Swap 2 Go (optionnel — `phi3.5:mini` uniquement)
+
+> Swap 4 Go déconseillé sur SD card : cycles d'écriture élevés → usure prématurée.
 
 ```bash
 sudo dphys-swapfile swapoff
-sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=4096/' /etc/dphys-swapfile
+sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
 sudo dphys-swapfile setup && sudo dphys-swapfile swapon
-free -h  # vérifier : Swap ~4G
+free -h  # vérifier : Swap ~2G
 ```
 
-### 2. Variables d'environnement
+### 3. Variables d'environnement
 
 ```bash
 cp .env.example .env
@@ -100,19 +113,19 @@ cp .env.example .env
 #   SMTP_*        → si notification email requise
 ```
 
-### 3. Premier démarrage
+### 4. Premier démarrage
 
 ```bash
-# Depuis la machine de développement :
+# Depuis la machine de développement (configure swap + pull modèle automatiquement) :
 make deploy-rpi
 
 # Ou manuellement sur le RPi :
 cd /opt/log-analyzer-anssi
 docker compose up -d
-docker compose exec ollama ollama pull granite3.3:8b  # ~5 Go, ~15 min
+docker exec log-ollama ollama pull granite3.1:2b  # ~1 Go, ~3 min
 ```
 
-### 4. Vérification
+### 5. Vérification
 
 ```bash
 # État des services
@@ -125,7 +138,16 @@ curl http://192.168.1.31:11434/api/version
 curl -d "Test SIEM" http://192.168.1.31:8080/log-analyzer-alerts
 ```
 
-### 5. Mise à jour hebdomadaire LOLDrivers (cron)
+### 6. Surveiller la mémoire
+
+```bash
+# Consommation par conteneur (temps réel)
+docker stats --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}"
+
+# Si log-ollama dépasse 2.5 Go → basculer sur llama3.2:1b dans .env
+```
+
+### 7. Mise à jour hebdomadaire LOLDrivers (cron)
 
 ```bash
 # Ajouter au crontab du RPi :

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import gzip
 import os
-import tempfile
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,6 @@ os.environ.setdefault("LOG_BASE_DIR", "/tmp/log-analyzer-test")
 os.environ.setdefault("LOG_RETENTION_DAYS", "7")
 
 from src.collectors.integrity import (
-    apply_retention_policy,
     compute_hmac,
     read_signature_file,
     rotate_log_file,

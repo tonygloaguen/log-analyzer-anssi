@@ -30,11 +30,15 @@ import re
 import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import defusedxml.ElementTree as ET  # type: ignore[import-untyped]
+except ImportError:
+    import xml.etree.ElementTree as ET  # type: ignore[assignment]
 
 from core.log_integrity import _require_secret, sign_event
 
@@ -167,7 +171,7 @@ class BYOVDDetector:
                 self._loldrivers_url,
                 headers={"User-Agent": "log-analyzer-anssi/1.0 (ANSSI compliance)"},
             )
-            with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # noqa: S310  # nosec B310
                 data = resp.read()
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             self._cache_path.write_bytes(data)
@@ -273,7 +277,6 @@ class BYOVDDetector:
 
         # EventData fields
         data_fields: dict[str, str] = {}
-        ns_data_prefix = f"{{{ns}}}"
         for data_el in ev.iter():
             local = _local_tag(data_el.tag)
             if local == "Data":

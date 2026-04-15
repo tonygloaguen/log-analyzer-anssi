@@ -296,7 +296,7 @@ class AlertDispatcher:
             headers["Authorization"] = f"Bearer {self._ntfy_token}"
         try:
             request = _req.Request(url, data=body[:_NTFY_BODY_MAX].encode("utf-8"), headers=headers, method="POST")
-            with _req.urlopen(request, timeout=10) as resp:  # noqa: S310
+            with _req.urlopen(request, timeout=10) as resp:  # noqa: S310  # nosec B310
                 return AlertResult(channel=AlertChannel.NTFY, success=resp.status in (200, 201, 202))
         except Exception as exc:
             return AlertResult(channel=AlertChannel.NTFY, success=False, error=str(exc))

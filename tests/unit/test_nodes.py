@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 
 from src.langgraph_pipeline.nodes import (
     auto_report,
-    classify_severity,
     detect_anomalies,
     human_escalation,
     normalize,

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 _OLLAMA_TIMEOUT_S = 30.0
 _DEFAULT_MODEL = "granite3.3:8b"
-_DEFAULT_DB_PATH = "/tmp/log_analyzer_checkpoint.db"  # noqa: S108
+_DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), "log_analyzer_checkpoint.db")
 
 _SYSTEM_PROMPT = (
     "Tu es un analyste SOC ANSSI. Analyse les alertes SIEM suivantes et retourne "

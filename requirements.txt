@@ -28,6 +28,9 @@ aiofiles>=23.2.0,<25.0.0
 # ─── Cryptographie (HMAC intégrité ANSSI) ────────────────────────────────────
 cryptography>=42.0.0,<44.0.0
 
+# ─── Sécurité XML (parsing Sysmon — B314 ANSSI) ─────────────────────────────
+defusedxml>=0.7.0,<1.0.0
+
 # ─── Logging structuré ───────────────────────────────────────────────────────
 structlog>=24.1.0,<26.0.0
 

@@ -64,7 +64,7 @@ class TestPipelineIntegration:
 
         # Simuler une attaque par force brute
         logs = [
-            make_log(f"Failed password for admin from 10.0.0.1 port 22 ssh2", source="ssh")
+            make_log("Failed password for admin from 10.0.0.1 port 22 ssh2", source="ssh")
             for _ in range(20)
         ] + [
             make_log("Accepted password for root from 10.0.0.1 port 22 ssh2", source="ssh")

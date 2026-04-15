@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 # Fixer les variables d'environnement avant l'import de l'app
 os.environ.setdefault("HMAC_SECRET_KEY", "test-hmac-key-for-api-tests-32bytes!")

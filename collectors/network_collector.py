@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import tempfile
 import time
 from collections import defaultdict
@@ -174,7 +173,9 @@ class NetworkCollector:
             )
             return []
 
-        pcap_path = Path(tempfile.mktemp(suffix=".pcap", prefix="log_analyzer_"))
+        _fd, _pcap_str = tempfile.mkstemp(suffix=".pcap", prefix="log_analyzer_")
+        os.close(_fd)
+        pcap_path = Path(_pcap_str)
         duration = min(self._poll_interval_s, 60)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -415,7 +416,9 @@ class NetworkCollector:
             logger.warning("[NetworkCollector] scapy absent — capture tcpdump impossible")
             return []
 
-        pcap_path = Path(tempfile.mktemp(suffix=".pcap", prefix="log_analyzer_net_"))
+        _fd2, _pcap_str2 = tempfile.mkstemp(suffix=".pcap", prefix="log_analyzer_net_")
+        os.close(_fd2)
+        pcap_path = Path(_pcap_str2)
         try:
             proc = await asyncio.create_subprocess_exec(
                 "tcpdump", "-i", iface, "-w", str(pcap_path),

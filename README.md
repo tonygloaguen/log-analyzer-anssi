@@ -1,228 +1,207 @@
 # log-analyzer-anssi
 
-Système d'analyse de journaux conforme aux recommandations ANSSI (Guide de recommandations
-de sécurité pour l'architecture d'un système de journalisation, 2022).
-
-**Stack** : Python 3.11 · LangGraph · Ollama/Mistral 7B · FastAPI · PostgreSQL+pgvector · Loki · Fluent Bit · Grafana · Docker Compose
+SIEM léger de détection BYOVD/ransomware pour Raspberry Pi 4 (ARM64).
+Conforme ANSSI · NIS2 Art.21 · LLM 100% local (granite3.3:8b via Ollama).
 
 ---
 
 ## Architecture
 
 ```
-                    ┌─────────────────────────────────────┐
-Sources de logs     │  Fluent Bit (TLS mutuel — ANSSI)    │
-nginx / ssh /  ───► │  Collecte, parse, enrichit          │
-auditd / apps       └────────────┬────────────────────────┘
-                                 │
-                    ┌────────────▼────────────────────────┐
-                    │  Loki              PostgreSQL        │
-                    │  (logs bruts)  +   (logs structurés)│
-                    └────────────┬────────────────────────┘
-                                 │  POST /analyze
-                    ┌────────────▼────────────────────────────────────┐
-                    │  LangGraph Pipeline                              │
-                    │                                                  │
-                    │  normalize ──► detect_anomalies ──► classify    │
-                    │                                         │        │
-                    │              score < 0.75 ◄─────────── │        │
-                    │                   │             score ≥ 0.75    │
-                    │            auto_report          human_escalation │
-                    └──────────────────┬──────────────────────────────┘
-                                       │
-                    ┌──────────────────▼──────────────────────────────┐
-                    │  FastAPI REST API                                │
-                    │  GET /health · POST /analyze · GET /reports     │
-                    └──────────────────┬──────────────────────────────┘
-                                       │
-                    ┌──────────────────▼──────────────────────────────┐
-                    │  Grafana Dashboards (temps réel)                 │
-                    └─────────────────────────────────────────────────┘
+Sysmon XML / auditd / Zeek conn.log
+          │
+          ▼
+┌─────────────────────────────────────────────────────┐
+│  collectors/                                        │
+│  ├── BYOVDDetector   ← loldrivers.io (SHA256)       │
+│  │   EventID 6 (driver load) + EventID 10 (EDR)     │
+│  └── NetworkCollector ← Zeek / tcpdump              │
+│      beaconing · Tor · DoH                          │
+└──────────────┬──────────────────────────────────────┘
+               │  alerts[]
+               ▼
+┌─────────────────────────────────────────────────────┐
+│  nodes/ransomware_behavior_analyst (LangGraph)       │
+│  httpx → Ollama granite3.3:8b  (timeout 30s)        │
+│  fallback statique si Ollama KO                     │
+│  SQLite checkpoint · HMAC-SHA256 signature          │
+└──────────────┬──────────────────────────────────────┘
+               │  notification_payload
+               ▼
+┌─────────────────────────────────────────────────────┐
+│  notifiers/AlertDispatcher                          │
+│  ntfy (push) → email SMTP (fallback)                │
+│  rate limit : 1 alerte / 5 min / technique          │
+└─────────────────────────────────────────────────────┘
+               │
+               ▼
+         Raspberry Pi 4 — ARM64
+         ntfy :8080 · ollama :11434
 ```
-
-### Pipeline LangGraph — 4 nœuds
-
-| Nœud | Rôle |
-|---|---|
-| `normalize` | Parse les logs bruts → `LogEntry` typé |
-| `detect_anomalies` | Pattern matching (brute-force, SQLi, traversal…) + score de risque |
-| `classify_severity` | Sévérité finale + analyse contextuelle Mistral 7B |
-| `auto_report` / `human_escalation` | Routage conditionnel selon score |
 
 ---
 
-## Conformité ANSSI
+## Couverture MITRE ATT&CK
+
+| Technique | ID | Détecteur |
+|---|---|---|
+| Exploit Public-Facing App / priv-esc | T1068 | BYOVDDetector (EventID 6) |
+| Impair Defenses — Disable/Mod Tools | T1562.001 | BYOVDDetector (EventID 10) |
+| Command & Scripting Interpreter | T1059 | ransomware_behavior_analyst |
+| Data Encrypted for Impact | T1486 | ransomware_behavior_analyst |
+| Inhibit System Recovery | T1490 | ransomware_behavior_analyst |
+| Lateral Tool Transfer | T1021 | ransomware_behavior_analyst |
+| Application Layer Protocol | T1071 | NetworkCollector (beaconing) |
+| Proxy — Tor | T1090.003 | NetworkCollector (ports 9001/9030) |
+| DNS over HTTPS | T1071.004 | NetworkCollector (DoH suspicion) |
+
+---
+
+## Conformité NIS2 / ANSSI
 
 | Exigence | Implémentation |
 |---|---|
-| Transport chiffré | TLS mutuel (mTLS) Fluent Bit → Loki |
-| Partition dédiée | Volume Docker dédié `/var/log-analyzer` |
-| Intégrité des fichiers | HMAC-SHA256 sur chaque archive (`.hmac` adjacent) |
-| Rotation | Quotidienne avec compression gzip |
-| Rétention configurable | `LOG_RETENTION_DAYS` (défaut 90j) |
-| Synchronisation NTP | Service NTP dédié dans Docker Compose |
-| Séparation des rôles | Réseaux Docker isolés (collect / analyze / storage) |
-| Traçabilité | Table `audit_trail` PostgreSQL + piste d'audit dans chaque rapport |
-| LLM local uniquement | Ollama/Mistral 7B — aucune donnée envoyée vers des services cloud |
+| NIS2 Art.21.2.h — intégrité journaux | HMAC-SHA256 sur chaque événement (`core/log_integrity.py`) |
+| LLM local uniquement | Ollama sur le RPi — aucune donnée cloud |
+| Pas de secret au build | `HMAC_SECRET` obligatoire à runtime, aucun default |
+| Signature des alertes | `sign_event()` sur chaque alerte avant dispatch |
+| Rétention configurable | `LOG_RETENTION_DAYS` (min 365j ANSSI prod) |
+| Isolation réseau | Docker Compose sans exposition de ports internes |
+| Mise à jour des IoC | `scripts/update_loldrivers.sh` (cron hebdomadaire) |
+| Audit trail | SQLite checkpoint chaque analyse (table `ransomware_analyses`) |
 
 ---
 
-## Démarrage rapide
+## Déploiement Raspberry Pi 4
 
 ### Prérequis
 
-- Docker 24+ et Docker Compose v2
-- 8 Go RAM minimum (Mistral 7B)
-- `openssl` (pour la génération des certificats TLS)
+- Raspberry Pi 4 (4 Go RAM minimum)
+- Raspberry Pi OS 64-bit (Bookworm)
+- Docker 24+ et Docker Compose v2 installés
+- SSH configuré : `gloaguen@192.168.1.31`
 
-### Installation
-
-```bash
-# 1. Cloner et configurer
-git clone <url> log-analyzer-anssi
-cd log-analyzer-anssi
-
-# 2. Variables d'environnement
-cp .env.example .env.local
-# Éditer .env.local : définir POSTGRES_PASSWORD, HMAC_SECRET_KEY, etc.
-
-# 3. Générer les certificats TLS de développement
-./scripts/gen_certs.sh ./certs
-
-# 4. Créer le répertoire de logs (ANSSI : partition dédiée)
-mkdir -p /tmp/log-analyzer
-
-# 5. Démarrer les services
-docker compose --env-file .env.local up -d
-
-# 6. Télécharger Mistral 7B (première exécution — ~4 Go)
-# Automatique via le service ollama-init, surveiller avec :
-docker logs log-ollama-init -f
-
-# 7. Vérifier l'état
-curl http://localhost:8000/health | jq
-```
-
-### Endpoints API
+### 1. Swap 4 Go (requis pour granite3.3:8b)
 
 ```bash
-# Santé des services
-GET  http://localhost:8000/health
-
-# Déclencher une analyse (logs depuis Loki, dernière heure)
-POST http://localhost:8000/analyze
-{
-  "source": "nginx",
-  "time_range": "1h"
-}
-
-# Avec logs fournis directement
-POST http://localhost:8000/analyze
-{
-  "source": "*",
-  "time_range": "1h",
-  "raw_logs": [
-    {"timestamp": "2024-01-15T10:30:00Z", "message": "...", "source": "nginx", "host": "web01"}
-  ]
-}
-
-# Lister les rapports
-GET  http://localhost:8000/reports?limit=20&offset=0
-
-# Récupérer un rapport
-GET  http://localhost:8000/reports/{id}
-
-# Documentation interactive
-GET  http://localhost:8000/docs
+sudo dphys-swapfile swapoff
+sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=4096/' /etc/dphys-swapfile
+sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+free -h  # vérifier : Swap ~4G
 ```
 
-### Interfaces
+### 2. Variables d'environnement
 
-| Service | URL | Credentials |
-|---|---|---|
-| API FastAPI | http://localhost:8000/docs | — |
-| Grafana | http://localhost:3000 | admin / voir `.env.local` |
-| Loki | http://localhost:3100 | — |
+```bash
+cp .env.example .env
+# Renseigner obligatoirement :
+#   HMAC_SECRET   → openssl rand -hex 32
+#   NTFY_TOPIC    → nom de topic privé
+#   SMTP_*        → si notification email requise
+```
+
+### 3. Premier démarrage
+
+```bash
+# Depuis la machine de développement :
+make deploy-rpi
+
+# Ou manuellement sur le RPi :
+cd /opt/log-analyzer-anssi
+docker compose up -d
+docker compose exec ollama ollama pull granite3.3:8b  # ~5 Go, ~15 min
+```
+
+### 4. Vérification
+
+```bash
+# État des services
+docker compose ps
+
+# Santé Ollama
+curl http://192.168.1.31:11434/api/version
+
+# Test ntfy
+curl -d "Test SIEM" http://192.168.1.31:8080/log-analyzer-alerts
+```
+
+### 5. Mise à jour hebdomadaire LOLDrivers (cron)
+
+```bash
+# Ajouter au crontab du RPi :
+0 3 * * 0 /opt/log-analyzer-anssi/scripts/update_loldrivers.sh \
+    >> /var/log/loldrivers-update.log 2>&1
+```
 
 ---
 
-## Développement
+## Commandes Make
 
-```bash
-# Installer les dépendances
-pip install -r requirements.txt
+| Commande | Description |
+|---|---|
+| `make run` | Démarrer les services Docker Compose |
+| `make stop` | Arrêter les services |
+| `make test` | Tous les tests + couverture HTML |
+| `make test-unit` | Tests unitaires uniquement |
+| `make lint` | Vérification style ruff |
+| `make typecheck` | mypy --strict |
+| `make update-loldrivers` | Mettre à jour le cache loldrivers.io |
+| `make deploy-rpi` | Déployer sur gloaguen@192.168.1.31 |
+| `make clean` | Supprimer artefacts (htmlcov, caches) |
 
-# Tests unitaires
-pytest tests/unit/ -v
+---
 
-# Tests d'intégration (pipeline complet, Ollama mocké)
-pytest tests/integration/ -v
+## Variables d'environnement
 
-# Tous les tests avec couverture
-pytest tests/ --cov=src --cov-report=html
+| Variable | Défaut | Description |
+|---|---|---|
+| `HMAC_SECRET` | *obligatoire* | Clé HMAC-SHA256 — `openssl rand -hex 32` |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | URL Ollama local |
+| `OLLAMA_MODEL` | `granite3.3:8b` | Modèle LLM analyst |
+| `LOLDRIVERS_CACHE` | `/app/data/loldrivers_cache.json` | Cache LOLDrivers |
+| `BYOVD_RISK_THRESHOLD` | `0.6` | Seuil alerte BYOVD |
+| `NTFY_URL` | `http://ntfy:8080` | URL ntfy auto-hébergé |
+| `NTFY_TOPIC` | `log-analyzer-alerts` | Topic ntfy |
+| `NTFY_TOKEN` | — | Bearer token ntfy (optionnel) |
+| `ALERT_MIN_SCORE` | `0.6` | Score minimal pour notifier |
+| `NOTIFIER_CHANNELS` | `ntfy,email` | Ordre des canaux (priorité gauche) |
+| `SMTP_HOST` | — | Serveur SMTP (fallback email) |
+| `ALERT_EMAIL_TO` | — | Destinataires email (virgule) |
+| `ZEEK_LOG_DIR` | `/var/log/zeek/current` | Logs Zeek (conn.log) |
+| `TCPDUMP_IFACE` | `eth0` | Interface tcpdump fallback |
+| `LOG_RETENTION_DAYS` | `365` | Rétention archives (ANSSI min) |
 
-# Linter / type check
-mypy src/ --strict
-```
+---
 
-### Structure du projet
+## Structure du projet
 
 ```
 log-analyzer-anssi/
-├── CLAUDE.md                    # Instructions Claude Code
-├── docker-compose.yml           # Orchestration Docker
-├── Dockerfile                   # Image API
-├── requirements.txt
-├── pytest.ini
-├── src/
-│   ├── langgraph_pipeline/
-│   │   ├── graph.py             # Définition + compilation du graphe
-│   │   ├── nodes.py             # 4 nœuds : normalize, detect, classify, report
-│   │   ├── state.py             # LogAnalysisState (TypedDict)
-│   │   ├── conditions.py        # Routage conditionnel (route_by_risk)
-│   │   └── llm_client.py       # Client Ollama async
-│   ├── api/
-│   │   ├── main.py              # Application FastAPI
-│   │   ├── schemas.py           # Modèles Pydantic
-│   │   └── routes/
-│   │       ├── analysis.py      # POST /analyze, GET /reports
-│   │       └── health.py        # GET /health
-│   ├── collectors/
-│   │   ├── log_collector.py     # Client Loki async
-│   │   ├── pg_writer.py         # Écriture PostgreSQL async
-│   │   └── integrity.py         # HMAC + rotation + rétention
-│   └── models/
-│       ├── log_entry.py         # Modèle log normalisé
-│       └── report.py            # Modèle rapport d'analyse
-├── config/
-│   ├── fluent-bit.conf          # Config collecte TLS
-│   ├── fluent-bit-parsers.conf  # Parsers (nginx, syslog, json)
-│   ├── loki-config.yml          # Config Loki + rétention
-│   └── grafana/
-│       ├── provisioning/        # Datasources + dashboards auto
-│       └── dashboards/          # JSON dashboards
+├── core/
+│   └── log_integrity.py        # HMAC-SHA256, hash chaining NIS2
+├── detectors/
+│   └── byovd_detector.py       # T1068+T1562.001, loldrivers.io
+├── collectors/
+│   └── network_collector.py    # Zeek, beaconing, Tor, DoH
+├── nodes/
+│   └── ransomware_behavior_analyst.py  # LangGraph, Ollama, SQLite
+├── notifiers/
+│   └── alert_dispatcher.py     # ntfy + SMTP, rate limiting
 ├── scripts/
-│   ├── gen_certs.sh             # Génération certificats TLS dev
-│   └── init_db.sql              # Schéma PostgreSQL + pgvector
+│   └── update_loldrivers.sh    # Cron hebdomadaire IoC
 ├── tests/
-│   ├── unit/                    # Tests nœuds, intégrité, API
-│   └── integration/             # Tests pipeline end-to-end
-└── certs/                       # Certificats TLS (gitignorés)
+│   ├── fixtures/               # XML Sysmon (TP/FP), Zeek TSV
+│   └── test_byovd_detector.py  # 11 tests (TP×4, FP×4, boundary×3)
+├── data/                       # Cache LOLDrivers, SQLite DB
+├── .github/workflows/
+│   ├── ci.yml                  # lint + test ≥80% + security
+│   ├── build-check.yml         # Docker buildx ARM64 + SBOM syft
+│   └── deploy-notify.yml       # ntfy notification on main push
+├── docker-compose.yml          # siem + ntfy + ollama (ARM64)
+├── Dockerfile                  # python:3.11-slim-bookworm
+├── Makefile                    # run/test/lint/deploy-rpi
+└── .env.example                # Template variables (copier → .env)
 ```
-
----
-
-## Sécurité et production
-
-> Ces instructions s'appliquent pour un déploiement en production conforme ANSSI.
-
-1. **Certificats TLS** : remplacer les certificats auto-signés par des certificats émis par une PKI d'entreprise
-2. **Secrets** : stocker `HMAC_SECRET_KEY` et `POSTGRES_PASSWORD` dans un gestionnaire de secrets (Vault, AWS Secrets Manager…)
-3. **Rétention** : porter `LOG_RETENTION_DAYS` à 365 minimum (recommandation ANSSI)
-4. **Partition dédiée** : monter `/var/log-analyzer` sur une partition physique dédiée
-5. **Réseau** : les services `postgres` et `loki` ne doivent pas exposer de ports à l'extérieur
-6. **Ollama** : s'assurer que le service n'a pas accès à Internet (conformité ANSSI : LLM local uniquement)
-7. **Audit trail** : activer Row Level Security sur la table `audit_trail` PostgreSQL
 
 ---
 

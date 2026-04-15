@@ -1,0 +1,113 @@
+name: CI — lint · test · security
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  HMAC_SECRET: "ci-test-secret-00000000000000000000000000000000"
+
+jobs:
+  # ─── Lint & type check ──────────────────────────────────────────────────────
+  lint:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: ruff check
+        run: python -m ruff check detectors/ collectors/ nodes/ notifiers/ core/ tests/
+
+      - name: ruff format check
+        run: python -m ruff format --check detectors/ collectors/ nodes/ notifiers/ core/
+
+      - name: mypy --strict
+        run: python -m mypy detectors/ collectors/ nodes/ notifiers/ core/ --strict --ignore-missing-imports
+
+  # ─── Tests + couverture ─────────────────────────────────────────────────────
+  test:
+    name: Tests (≥80% coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: pytest + coverage
+        run: |
+          python -m pytest tests/ \
+            --cov=detectors --cov=collectors --cov=nodes --cov=notifiers --cov=core \
+            --cov-report=xml --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -v
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ─── Sécurité statique ──────────────────────────────────────────────────────
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # requis pour gitleaks
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install security tools
+        run: pip install bandit safety
+
+      - name: gitleaks — secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: bandit — SAST Python
+        run: |
+          python -m bandit -r detectors/ collectors/ nodes/ notifiers/ core/ \
+            -ll --exit-zero \
+            -f json -o bandit-report.json
+          python -m bandit -r detectors/ collectors/ nodes/ notifiers/ core/ -ll
+
+      - name: safety — dépendances vulnérables
+        run: python -m safety check -r requirements.txt --continue-on-error
+
+      - name: trivy — filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          format: table
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json

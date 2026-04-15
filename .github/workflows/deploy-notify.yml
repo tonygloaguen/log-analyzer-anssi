@@ -1,0 +1,51 @@
+name: Deploy notify — ntfy on main push
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    name: Notifier le déploiement via ntfy
+    runs-on: ubuntu-latest
+    # Ce workflow notifie uniquement — le déploiement réel est manuel (make deploy-rpi)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extraire le résumé du commit
+        id: commit
+        run: |
+          echo "sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          echo "msg=$(git log -1 --pretty=%s)" >> "$GITHUB_OUTPUT"
+          echo "author=$(git log -1 --pretty=%an)" >> "$GITHUB_OUTPUT"
+
+      - name: Notifier via ntfy
+        if: ${{ secrets.NTFY_URL != '' }}
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC || 'log-analyzer-alerts' }}
+        run: |
+          TITLE="[CI] Nouveau push sur main — ${{ steps.commit.outputs.sha }}"
+          BODY="${{ steps.commit.outputs.msg }} — par ${{ steps.commit.outputs.author }}"$'\n'"Déployer manuellement : make deploy-rpi"
+
+          AUTH_HEADER=""
+          if [ -n "${NTFY_TOKEN}" ]; then
+            AUTH_HEADER="Authorization: Bearer ${NTFY_TOKEN}"
+          fi
+
+          curl -fsSL \
+            -H "X-Title: ${TITLE}" \
+            -H "X-Priority: default" \
+            -H "Content-Type: text/plain; charset=utf-8" \
+            ${AUTH_HEADER:+-H "${AUTH_HEADER}"} \
+            -d "${BODY}" \
+            "${NTFY_URL}/${NTFY_TOPIC}" || echo "ntfy indisponible — notification ignorée"
+
+      - name: Résumé
+        run: |
+          echo "## Push main — ${{ steps.commit.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit** : ${{ steps.commit.outputs.msg }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Auteur** : ${{ steps.commit.outputs.author }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Déploiement manuel requis : \`make deploy-rpi\`" >> "$GITHUB_STEP_SUMMARY"

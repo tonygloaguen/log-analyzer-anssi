@@ -15,7 +15,7 @@ PYTHON        := python3
 PYTEST        := pytest
 MYPY          := mypy
 REPORT_DIR    := reports
-RPI_HOST      ?= pi@raspberrypi.local
+RPI_HOST      ?= gloaguen@192.168.1.31
 RPI_DEST      ?= /opt/log-analyzer-anssi
 
 # ─── Couleurs terminal ───────────────────────────────────────────────────────
@@ -99,10 +99,16 @@ typecheck:
 deploy-rpi:
 	@echo "$(BOLD)▶ Déploiement sur $(RPI_HOST):$(RPI_DEST)$(RESET)"
 	rsync -avz --exclude='.git' --exclude='htmlcov' --exclude='*.pyc' \
-	    --exclude='.env.local' --exclude='data/loldrivers_cache.json' \
+	    --exclude='.env' --exclude='data/loldrivers_cache.json' \
+	    --exclude='ntfy-data/' --exclude='logs/' \
 	    ./ $(RPI_HOST):$(RPI_DEST)/
-	ssh $(RPI_HOST) "cd $(RPI_DEST) && docker compose --env-file .env.local up -d --build"
-	@echo "$(GREEN)Déploiement terminé.$(RESET)"
+	ssh $(RPI_HOST) "cd $(RPI_DEST) && \
+	    docker compose pull ollama ntfy && \
+	    docker compose up -d --build && \
+	    docker compose exec ollama ollama pull granite3.3:8b"
+	@echo "$(GREEN)Déploiement terminé sur $(RPI_HOST).$(RESET)"
+	@echo "$(CYAN)  ntfy   → http://$(RPI_HOST):8080$(RESET)"
+	@echo "$(CYAN)  ollama → http://$(RPI_HOST):11434$(RESET)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 ## clean : Supprimer les artefacts générés (htmlcov, rapports, caches Python)

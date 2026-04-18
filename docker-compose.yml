@@ -2,8 +2,6 @@
 # docker-compose.yml — log-analyzer-anssi
 # Conforme ANSSI : TLS mutuel, partition dédiée, NTP synchronisé, rétention configurable
 
-version: "3.9"
-
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -19,12 +17,14 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
+        - subnet: 172.22.0.0/24
+        
   analyze-net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.1.0/24
+        - subnet: 172.22.1.0/24
+        
   storage-net:
     driver: bridge
 

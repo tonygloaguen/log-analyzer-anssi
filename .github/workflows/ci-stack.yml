@@ -203,7 +203,7 @@ jobs:
 
       # Trivy : scan des vulnérabilités dans le filesystem
       - name: "Scan vulnérabilités — filesystem (Trivy)"
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.
         with:
           scan-type: fs
           scan-ref: .
@@ -221,11 +221,10 @@ jobs:
             .
 
       - name: "Scan vulnérabilités — image Docker API (Trivy)"
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.70.0
         with:
           scan-type: image
           image-ref: "log-analyzer-api:ci-scan"
           severity: "HIGH,CRITICAL"
           exit-code: "0"        # Warning only : les CVE viennent souvent de la base Python
-          ignore-unfixed: true
-          format: table
+          ignore-unfixed: true          format: table

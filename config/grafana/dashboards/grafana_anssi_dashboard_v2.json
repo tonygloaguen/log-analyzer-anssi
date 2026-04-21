@@ -1,0 +1,187 @@
+{
+  "title": "Log Analyzer ANSSI — Observabilité Fluent Bit v2",
+  "uid": "anssi-fluent-bit-v2",
+  "version": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Volume de logs (5 min)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"}[5m]))",
+          "instant": true,
+          "legendFormat": "volume"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1000, "color": "yellow" },
+              { "value": 5000, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Erreurs détectées (5 min)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"} |= \"error\"[5m]))",
+          "instant": true,
+          "legendFormat": "erreurs"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "yellow" },
+              { "value": 10, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Tentatives SSH échouées (15 min)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"} |= \"Failed password\"[15m]))",
+          "instant": true,
+          "legendFormat": "SSH échoués"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "orange" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Débit de logs",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"}[1m]))",
+          "legendFormat": "logs/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Événements sensibles",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"} |= \"error\"[1m]))",
+          "legendFormat": "erreurs"
+        },
+        {
+          "expr": "sum(count_over_time({job=\"fluent-bit\"} |= \"Failed password\"[1m]))",
+          "legendFormat": "SSH échoués"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Logs d'erreur récents",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 12 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "{job=\"fluent-bit\"} |= \"error\"",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      }
+    },
+    {
+      "id": 7,
+      "title": "Logs bruts récents",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 12 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "{job=\"fluent-bit\"}",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      }
+    }
+  ]
+}

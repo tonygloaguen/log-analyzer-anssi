@@ -1,0 +1,34 @@
+---
+# docker-compose.ci.yml — Override CI/CD
+#
+# Remplace les services lourds par des stubs légers pour l'intégration continue.
+# L'API retournera status="degraded" pour ollama (URL injoignable) mais sera
+# fonctionnelle et répondra à /health.
+#
+# Usage :
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d fluent-bit api
+#
+# Prérequis : /tmp/log-analyzer/{app,archive,fluent-bit-storage} doivent exister.
+
+services:
+  # Stub Ollama : container alpine qui réussit immédiatement le healthcheck.
+  # Permet à l'API de démarrer sans télécharger le modèle Mistral (~4 Go).
+  ollama:
+    image: alpine:3.19
+    entrypoint: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 5s
+      timeout: 2s
+      retries: 1
+      start_period: 2s
+    networks:
+      - analyze-net
+
+  # ollama-init : no-op en CI (pas de modèle à télécharger)
+  ollama-init:
+    image: alpine:3.19
+    entrypoint: ["true"]
+    restart: "no"
+    networks:
+      - analyze-net

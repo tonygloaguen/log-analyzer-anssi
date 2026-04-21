@@ -210,6 +210,45 @@ Dépend de PostgreSQL et de données structurées — à utiliser uniquement qua
 
 ---
 
+## Intégration continue (CI)
+
+| Workflow | Déclencheur | Durée | Rôle |
+|---|---|---|---|
+| `ci-stack.yml` | push, pull_request | ~4 min | Validation stack + scans sécurité |
+| `ci-tls-syslog.yml` | workflow_dispatch | ~4 min | Test syslog TLS/mTLS end-to-end |
+
+### Validation locale rapide
+
+```bash
+# Reproduit le CI principal en local (Ollama remplacé par un stub)
+./scripts/validate_stack.sh
+
+# Avec test TLS en plus (génère les certs si absents)
+./scripts/validate_stack.sh --tls
+
+# Nettoyage automatique après
+./scripts/validate_stack.sh --clean
+```
+
+### Ce que valide le CI principal (`ci-stack.yml`)
+
+- Démarrage Docker Compose avec stub Ollama (`docker-compose.ci.yml`)
+- Healthcheck Loki (`/ready`) et API (`/health`)
+- Injection d'un log JSON → vérification d'ingestion dans Loki
+- Scan de secrets : Gitleaks (historique git + fichiers)
+- Scan de vulnérabilités : Trivy (filesystem HIGH/CRITICAL → bloquant, image → warning)
+
+> **Note** : Ollama et Grafana ne sont pas démarrés en CI. L'API retourne `status=degraded`
+> pour ollama, ce qui est attendu.
+
+### Lancer le test TLS manuellement
+
+Depuis GitHub : **Actions → CI — Mode syslog TLS/mTLS → Run workflow**
+
+> Documentation complète : [docs/ci.md](docs/ci.md)
+
+---
+
 ## Développement
 
 ```bash

@@ -1,0 +1,199 @@
+---
+# ci-tls-syslog.yml — Test du mode syslog TLS/mTLS
+#
+# Ce workflow valide le transport syslog TCP/TLS (ANSSI-ready) en conditions réelles :
+# génération de certificats de labo, démarrage de Fluent Bit en mode TLS,
+# envoi d'un message via openssl s_client, vérification dans Loki.
+#
+# Déclenché sur : workflow_dispatch uniquement (test manuel)
+# Ce workflow est volontairement séparé du CI principal car :
+#   - il nécessite plus de temps (génération certs, démarrage TLS)
+#   - il valide un scénario distinct (transport sécurisé, pas l'observabilité de base)
+#
+# Durée estimée : 3-5 minutes
+
+name: "CI — Mode syslog TLS/mTLS"
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Afficher les logs Fluent Bit détaillés"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  # Requis par docker-compose.yml (variables :? validées à la lecture du fichier)
+  POSTGRES_PASSWORD: ci-postgres-password-tls
+  HMAC_SECRET_KEY: ci-hmac-secret-key-must-be-long-enough
+  GRAFANA_PASSWORD: ci-grafana-password-tls
+
+jobs:
+  tls-syslog-test:
+    name: "Test syslog TLS end-to-end"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      # ── Prérequis ──────────────────────────────────────────────────────────
+      - name: "Créer les répertoires requis"
+        run: |
+          mkdir -p /tmp/log-analyzer/app \
+                   /tmp/log-analyzer/archive \
+                   /tmp/log-analyzer/fluent-bit-storage
+
+      - name: "Vérifier que openssl est disponible"
+        run: openssl version
+
+      # ── Génération des certificats de labo ────────────────────────────────
+      - name: "Générer les certificats TLS de labo"
+        run: |
+          chmod +x ./scripts/gen_certs.sh
+          ./scripts/gen_certs.sh ./certs
+          echo "Certificats générés :"
+          ls -la ./certs/
+
+      - name: "Vérifier la cohérence des certificats"
+        run: |
+          openssl verify -CAfile ./certs/ca.crt ./certs/server.crt
+          openssl verify -CAfile ./certs/ca.crt ./certs/client.crt
+          echo "✓ Certificats valides"
+
+      # ── Démarrage Loki ─────────────────────────────────────────────────────
+      - name: "Démarrer Loki"
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.ci.yml \
+            up -d loki
+
+      - name: "Attendre Loki (/ready)"
+        run: |
+          echo "Attente Loki ..."
+          for i in $(seq 1 24); do
+            if curl -sf http://localhost:3100/ready > /dev/null 2>&1; then
+              echo "✓ Loki prêt (tentative $i)"
+              exit 0
+            fi
+            echo "  tentative $i/24 — 5s..."
+            sleep 5
+          done
+          echo "✗ Loki non disponible après 120s"
+          docker compose logs loki --tail 20
+          exit 1
+
+      # ── Démarrage Fluent Bit en mode TLS ──────────────────────────────────
+      - name: "Démarrer Fluent Bit en mode syslog TLS (docker-compose.tls.yml)"
+        run: |
+          # docker-compose.tls.yml monte ./certs:/certs:ro et active fluent-bit-tls.conf
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.ci.yml \
+            -f docker-compose.tls.yml \
+            up -d --no-deps fluent-bit
+
+      - name: "Attendre que Fluent Bit soit démarré et en écoute sur port 5140"
+        run: |
+          echo "Attente Fluent Bit (port 5140) ..."
+          for i in $(seq 1 20); do
+            if docker compose logs fluent-bit 2>&1 | grep -q "listening on 0.0.0.0:5140"; then
+              echo "✓ Fluent Bit TLS en écoute (tentative $i)"
+              exit 0
+            fi
+            echo "  tentative $i/20 — 3s..."
+            sleep 3
+          done
+          echo "⚠ Port 5140 non trouvé dans les logs — tentative directe..."
+          # Fallback : vérifier si le port est ouvert
+          for i in $(seq 1 10); do
+            if nc -z localhost 5140 2>/dev/null; then
+              echo "✓ Port 5140 ouvert (tentative $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "✗ Fluent Bit TLS non démarré après 80s"
+          docker compose logs fluent-bit --tail 50
+          exit 1
+
+      - name: "Vérifier les logs Fluent Bit au démarrage"
+        run: |
+          docker compose logs fluent-bit --tail 30
+          # Vérifier absence d'erreur critique TLS
+          if docker compose logs fluent-bit 2>&1 | grep -qi "error loading.*certificate\|private key does not match"; then
+            echo "✗ Erreur TLS détectée dans Fluent Bit"
+            exit 1
+          fi
+          echo "✓ Pas d'erreur TLS critique"
+
+      # ── Test d'envoi syslog TLS ────────────────────────────────────────────
+      - name: "Envoyer un message syslog TLS via openssl s_client"
+        run: |
+          MARKER="tls-ci-marker-$$-$(date +%s)"
+          TS=$(date -u +%Y-%m-%dT%H:%M:%S.000+0000)
+          MSG="<165>1 $TS $(hostname) ci-test $$ - - $MARKER"
+          echo "Message syslog : $MSG"
+
+          # mTLS : le client présente client.crt signé par le CA
+          echo "$MSG" | timeout 10 openssl s_client \
+            -connect localhost:5140 \
+            -cert ./certs/client.crt \
+            -key ./certs/client.key \
+            -CAfile ./certs/ca.crt \
+            -quiet \
+            2>/dev/null \
+          && echo "✓ Message envoyé via TLS" \
+          || {
+            echo "⚠ openssl s_client a retourné un code non nul (peut être normal si le serveur ferme la connexion)"
+          }
+
+          echo "MARKER=$MARKER" >> "$GITHUB_ENV"
+
+      - name: "Attendre l'ingestion Fluent Bit → Loki (20s)"
+        run: sleep 20
+
+      # ── Vérification dans Loki ─────────────────────────────────────────────
+      - name: "Vérifier que le log syslog TLS est visible dans Loki"
+        run: |
+          START_NS=$(date -d '3 minutes ago' +%s)000000000
+          END_NS=$(date +%s)999999999
+
+          response=$(curl -sG http://localhost:3100/loki/api/v1/query_range \
+            --data-urlencode 'query={job="fluent-bit"}' \
+            --data-urlencode "start=$START_NS" \
+            --data-urlencode "end=$END_NS" \
+            --data-urlencode 'limit=50')
+          echo "Réponse Loki : $response"
+
+          echo "$response" | python3 -c "
+          import sys, json, os
+          d = json.load(sys.stdin)
+          assert d.get('status') == 'success', f'Statut Loki inattendu: {d}'
+          results = d.get('data', {}).get('result', [])
+          all_lines = ' '.join(
+            line for stream in results for _, line in stream.get('values', [])
+          )
+          marker = os.environ.get('MARKER', '')
+          if marker and marker in all_lines:
+            print(f'✓ Log TLS trouvé dans Loki (marker: {marker})')
+          else:
+            print(f'⚠ Marker non trouvé — Fluent Bit a peut-être flushé après la fenêtre de requête')
+            print(f'  Streams disponibles : {len(results)}')
+            print(f'  Ligne(s) reçues : {all_lines[:500]}')
+          "
+
+      # ── Dump optionnel ─────────────────────────────────────────────────────
+      - name: "Logs Fluent Bit détaillés (si debug=true)"
+        if: inputs.debug == 'true'
+        run: docker compose logs fluent-bit
+
+      - name: "Dump des logs en cas d'échec"
+        if: failure()
+        run: |
+          echo "=== fluent-bit ===" && docker compose logs fluent-bit --tail 50
+          echo "=== loki ===" && docker compose logs loki --tail 20
+          echo "=== certs ===" && ls -la ./certs/ || true

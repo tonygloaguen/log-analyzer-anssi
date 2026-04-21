@@ -5,14 +5,13 @@
 # À combiner avec docker-compose.yml — NE PAS utiliser seul.
 #
 # PRÉREQUIS :
-#   Le volume Docker nommé 'certs' doit contenir :
+#   Le répertoire ./certs/ doit contenir :
 #     ca.crt      — CA racine
 #     server.crt  — certificat serveur Fluent Bit
 #     server.key  — clé privée serveur
 #
 # Génération des certificats de labo :
 #   ./scripts/gen_certs.sh ./certs
-#   docker run --rm -v $(pwd)/certs:/src -v certs:/dest alpine cp -r /src/. /dest/
 #
 # ACTIVATION :
 #   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
@@ -24,9 +23,11 @@
 services:
   fluent-bit:
     volumes:
+      # Tous les volumes sont listés explicitement pour éviter les conflits de merge Compose.
+      # La cible /certs passe du volume nommé 'certs' au bind mount ./certs.
       - ./config/fluent-bit-tls.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./config/fluent-bit-parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - log-analyzer-data:/var/log-analyzer
-      - certs:/certs:ro
+      - ./certs:/certs:ro
     ports:
       - "5140:5140"    # Syslog TLS input (RFC 5424 over TCP/TLS)

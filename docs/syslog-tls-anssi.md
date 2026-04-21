@@ -67,8 +67,14 @@ Utilise `config/fluent-bit-tls.conf` via `docker-compose.tls.yml`.
 
 - Collecte par lecture de fichiers locaux (tail) **+** écoute syslog TCP/TLS port 5140
 - Authentification mutuelle : le client syslog doit présenter un certificat signé par le CA
-- **Nécessite** `/certs/ca.crt`, `/certs/server.crt`, `/certs/server.key` dans le volume Docker `certs`
-- Conforme ANSSI : transport chiffré, pas de log en clair sur le réseau
+- **Nécessite** `./certs/ca.crt`, `./certs/server.crt`, `./certs/server.key` dans le répertoire local `./certs/`
+- Transport chiffré : aucun log en clair sur le réseau
+
+> **ANSSI-ready ≠ ANSSI-compliant**
+>
+> Cette configuration implémente les mécanismes techniques requis (TLS 1.2+, mTLS, RFC 5424)
+> mais **ne constitue pas une conformité ANSSI complète**. Les éléments manquants sont listés
+> en [section 7](#7-limites-et-sécurité).
 
 ```bash
 # Démarrage mode TLS
@@ -118,18 +124,15 @@ Deux configs distinctes au lieu d'un bloc commenté :
 # certs/client.key     — clé privée client
 ```
 
-### Étape 2 — Peupler le volume Docker `certs`
+### Étape 2 — Vérifier le contenu de ./certs/
 
 ```bash
-# Copier les certificats dans le volume Docker nommé 'certs'
-docker run --rm \
-  -v $(pwd)/certs:/src \
-  -v certs:/dest \
-  alpine cp -r /src/. /dest/
-
-# Vérifier le contenu du volume
-docker run --rm -v certs:/certs alpine ls -la /certs/
+ls -la ./certs/
+# Attendu : ca.crt, server.crt, server.key (et client.crt, client.key pour les tests mTLS)
 ```
+
+Le répertoire `./certs/` est monté directement comme bind mount dans le conteneur (`./certs:/certs:ro`).
+Aucune copie dans un volume Docker nommé n'est nécessaire.
 
 ### Étape 3 — Démarrer Fluent Bit en mode TLS
 
@@ -140,7 +143,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
 ### Étape 4 — Vérifier le démarrage
 
 ```bash
-# Logs Fluent Bit (doit montrer "syslog" input initialisé)
+# Logs Fluent Bit (doit montrer "syslog.secure" input initialisé sur 5140)
 docker logs log-fluent-bit --tail 30
 
 # Vérifier que le port 5140 est ouvert
@@ -172,14 +175,48 @@ docker logs log-fluent-bit 2>&1 | grep -i "syslog"
 
 Sortie attendue (sans erreur) :
 ```
-[2024/xx/xx xx:xx:xx] [ info] [input:syslog:syslog.0] listening on 0.0.0.0:5140
+[2024/xx/xx xx:xx:xx] [ info] [input:syslog:syslog.secure.0] listening on 0.0.0.0:5140
 ```
 
-### 5.2 Envoyer un message syslog test avec TLS
+### 5.2 Envoyer un message syslog test — options par ordre de disponibilité
+
+#### Option A — `logger` (util-linux ≥ 2.33 avec support TLS)
 
 ```bash
-# Depuis l'hôte, envoyer un message syslog RFC 5424 via openssl (mTLS)
-# Le client doit présenter son certificat (client.crt / client.key)
+# Disponible sur Debian 11+, Ubuntu 22.04+, Raspberry Pi OS Bullseye+
+# Vérifier la disponibilité : logger --help 2>&1 | grep -i tls
+
+logger \
+  --server localhost \
+  --port 5140 \
+  --tcp \
+  --rfc5424 \
+  --tls \
+  --tls-ca-cert ./certs/ca.crt \
+  --tls-cert ./certs/client.crt \
+  --tls-key ./certs/client.key \
+  "Test syslog TLS ANSSI — $(date)"
+```
+
+> Si `logger` ne supporte pas `--tls`, utiliser `socat` (option B) ou `openssl` (option C).
+
+#### Option B — `socat` (disponible sur la plupart des distributions Linux)
+
+```bash
+# Installation si absent : sudo apt install socat
+MSG="<165>1 $(date -u +%Y-%m-%dT%H:%M:%SZ) $(hostname) myapp $$ - - Test socat TLS"
+echo "$MSG" | socat - \
+  OPENSSL:localhost:5140,\
+cert=./certs/client.crt,\
+key=./certs/client.key,\
+cafile=./certs/ca.crt,\
+verify=1
+```
+
+#### Option C — `openssl s_client` (référence, toujours disponible)
+
+```bash
+# Méthode de référence, portable partout où openssl est installé
 echo "<165>1 $(date -u +%Y-%m-%dT%H:%M:%SZ) testhost testapp 1234 - - Test syslog TLS ANSSI" | \
   openssl s_client \
     -connect localhost:5140 \
@@ -188,6 +225,26 @@ echo "<165>1 $(date -u +%Y-%m-%dT%H:%M:%SZ) testhost testapp 1234 - - Test syslo
     -CAfile ./certs/ca.crt \
     -quiet 2>/dev/null
 ```
+
+#### Option D — rsyslog (usage production, client Linux existant)
+
+Ajouter dans `/etc/rsyslog.d/99-fluent-bit.conf` sur la machine source :
+
+```
+# Envoi vers Fluent Bit en TLS (RFC 5424)
+*.* action(
+    type="omfwd"
+    target="<IP_FLUENT_BIT>"
+    port="5140"
+    protocol="tcp"
+    StreamDriver="gtls"
+    StreamDriverMode="1"
+    StreamDriverAuthMode="x509/certvalid"
+    StreamDriverPermittedPeers="server"
+)
+```
+
+Puis copier `ca.crt`, `client.crt`, `client.key` sur la machine source et configurer `$DefaultNetstreamDriverCAFile`, `$DefaultNetstreamDriverCertFile`, `$DefaultNetstreamDriverKeyFile` dans la config rsyslog globale.
 
 ### 5.3 Validation côté Loki
 
@@ -271,24 +328,63 @@ Si Grafana ne charge pas automatiquement le dashboard (volume non monté) :
 
 ## 7. Limites et sécurité
 
+### ANSSI-ready ≠ ANSSI-compliant
+
+Cette implémentation fournit les **mécanismes techniques** du transport sécurisé (TLS 1.2+, mTLS, RFC 5424), mais n'est **pas une mise en conformité ANSSI complète**. Différences :
+
+| Exigence ANSSI | État actuel | Ce qu'il faudrait |
+|---|---|---|
+| PKI d'entreprise | CA auto-signée (labo) | PKI interne ou EJBCA/Vault PKI |
+| Révocation certificats | Absente | CRL ou OCSP |
+| Validation hostname stricte | `tls.verify On` côté INPUT Fluent Bit ✓ | Idem côté Loki (actuellement `tls.verify Off`) |
+| Stockage clés privées | Fichiers système | HSM ou gestionnaire de secrets |
+| Rotation automatique | Manuelle | Automatisée (certbot, Vault PKI) |
+| Durée maximale des certs | 365 jours (gen_certs.sh) | Selon politique PKI interne |
+| Audit de la PKI | Non réalisé | Audit annuel recommandé |
+| Séparation CA/RA | Non applicable (labo) | CA racine hors ligne |
+
 ### Mode labo vs production
 
 | Point | Labo (gen_certs.sh) | Production ANSSI |
 |---|---|---|
-| CA | Auto-signée, 10 ans | PKI d'entreprise |
-| Durée des certs | 365 jours | Selon politique PKI |
-| Stockage clés | Fichiers système | HSM ou Vault |
+| CA | Auto-signée, 10 ans | PKI d'entreprise, CA racine hors ligne |
+| Durée des certs | 365 jours | Selon politique PKI (≤ 1 an) |
+| Stockage clés | Fichiers `./certs/` | HSM ou Vault |
 | Rotation | Manuelle | Automatisée |
-| `tls.verify` | On (recommandé même en labo) | On obligatoire |
+| `tls.verify` Fluent Bit INPUT | On ✓ | On obligatoire |
+| `tls.verify` Fluent Bit → Loki | Off (Loki sans cert valide) | On avec cert Loki signé |
 | Révocation | Non implémenté | CRL ou OCSP |
+| Validation hostname | Partielle (SAN dans gen_certs.sh) | Stricte + vérification CN |
 
 ### Ce qui reste à faire pour une conformité plus stricte
 
-- Activer `tls.verify On` côté Loki (nécessite un certificat serveur Loki valide)
-- Mettre en place une rotation automatique des certificats (certbot, Vault PKI, etc.)
+- Activer `tls.verify On` côté OUTPUT Loki (nécessite un certificat serveur Loki valide signé par le CA)
+- Mettre en place une rotation automatique des certificats (Vault PKI, certbot, step-ca)
+- Implémenter la révocation (CRL publiée ou endpoint OCSP)
 - Configurer des alertes Grafana sur les patterns d'erreur critiques
 - Activer Row Level Security sur la table `audit_trail` PostgreSQL
 - Exposer les métriques Fluent Bit (port 2021) vers un Prometheus pour alerting
+
+### Évolution des labels Loki
+
+**État actuel** : un seul label fiable → `job=fluent-bit`.
+Les tentatives précédentes avec `Label_keys` ont cassé Fluent Bit 3.0 (champs inexistants dans les records).
+
+**Enrichissement implémenté dans `fluent-bit-tls.conf`** :
+Le filtre `modify` copie `ident` → `service` dans le corps du log (pas un label Loki).
+Ce champ apparaît dans les logs bruts mais n'est pas indexé.
+
+**Prochaine étape possible** (quand la structure de labels est stabilisée) :
+Ajouter `service` comme label Loki dans l'OUTPUT uniquement **après** avoir vérifié
+que le champ est présent dans tous les records syslog :
+
+```
+# À NE PAS activer avant validation — teste d'abord avec :
+# curl -s http://localhost:3100/loki/api/v1/label/service/values
+Labels  job=fluent-bit,service=$service
+```
+
+Ne jamais utiliser `Label_keys` avec des champs optionnels sur Fluent Bit 3.0.
 
 ---
 
@@ -301,15 +397,14 @@ Si Grafana ne charge pas automatiquement le dashboard (volume non monté) :
 **Cause typique** : `/certs` vide ou fichier manquant.
 
 ```bash
-# Diagnostic
-docker run --rm -v certs:/certs alpine ls -la /certs/
+# Diagnostic — vérifier le contenu du répertoire local
+ls -la ./certs/
 
 # Solution A — Revenir au mode stable immédiatement
 docker compose up -d --force-recreate fluent-bit
 
-# Solution B — Peupler les certs puis relancer en mode TLS
+# Solution B — Générer les certs puis relancer en mode TLS
 ./scripts/gen_certs.sh ./certs
-docker run --rm -v $(pwd)/certs:/src -v certs:/dest alpine cp -r /src/. /dest/
 docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
 ```
 
@@ -319,7 +414,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
 [error] [tls] error loading CA certificate: /certs/ca.crt: No such file or directory
 ```
 
-→ Le volume `certs` existe mais ne contient pas `ca.crt`. Relancer `gen_certs.sh` et recopier.
+→ Le répertoire `./certs/` ne contient pas `ca.crt`. Relancer `./scripts/gen_certs.sh ./certs`.
 
 ### Clé/cert incohérents
 

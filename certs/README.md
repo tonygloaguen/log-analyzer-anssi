@@ -26,13 +26,10 @@ Les fichiers `*.csr` (Certificate Signing Request) sont intermédiaires et peuve
 ```bash
 # Génère tous les certificats nécessaires dans ./certs/
 ./scripts/gen_certs.sh ./certs
-
-# Copier dans le volume Docker nommé 'certs'
-docker run --rm \
-  -v $(pwd)/certs:/src \
-  -v certs:/dest \
-  alpine cp -r /src/. /dest/
 ```
+
+Le répertoire `./certs/` est monté directement comme bind mount dans le conteneur Fluent Bit
+via `docker-compose.tls.yml` (`./certs:/certs:ro`). Aucune copie dans un volume Docker nommé n'est nécessaire.
 
 Le script `gen_certs.sh` produit des certificats **auto-signés** à durée limitée (CA : 10 ans, certs : 1 an).
 Ces certificats sont **uniquement adaptés au labo / développement**.

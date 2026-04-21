@@ -227,4 +227,5 @@ jobs:
           image-ref: "log-analyzer-api:ci-scan"
           severity: "HIGH,CRITICAL"
           exit-code: "0"        # Warning only : les CVE viennent souvent de la base Python
-          ignore-unfixed: true          format: table
+          ignore-unfixed: true          
+          format: table

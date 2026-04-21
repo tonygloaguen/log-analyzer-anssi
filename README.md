@@ -67,6 +67,21 @@ auditd / apps       └────────────┬──────
 
 ---
 
+## Modes de déploiement
+
+Le projet supporte deux modes de fonctionnement :
+
+| Mode | Config Fluent Bit | Syslog TLS | Certificats requis |
+|---|---|---|---|
+| **Stable (défaut)** | `fluent-bit.conf` | Désactivé | Non |
+| **TLS/mTLS ANSSI** | `fluent-bit-tls.conf` | Activé (port 5140) | Oui (`ca.crt`, `server.crt`, `server.key`) |
+
+Le mode stable est validé en production. Le mode TLS est activable explicitement une fois les certificats en place.
+
+> **Documentation complète :** [docs/syslog-tls-anssi.md](docs/syslog-tls-anssi.md)
+
+---
+
 ## Démarrage rapide
 
 ### Prérequis
@@ -75,7 +90,7 @@ auditd / apps       └────────────┬──────
 - 8 Go RAM minimum (Mistral 7B)
 - `openssl` (pour la génération des certificats TLS)
 
-### Installation
+### Installation — Mode stable (sans certificats)
 
 ```bash
 # 1. Cloner et configurer
@@ -84,24 +99,42 @@ cd log-analyzer-anssi
 
 # 2. Variables d'environnement
 cp .env.example .env.local
-# Éditer .env.local : définir POSTGRES_PASSWORD, HMAC_SECRET_KEY, etc.
+# Éditer .env.local : définir POSTGRES_PASSWORD, HMAC_SECRET_KEY, GRAFANA_PASSWORD, etc.
 
-# 3. Générer les certificats TLS de développement
-./scripts/gen_certs.sh ./certs
-
-# 4. Créer le répertoire de logs (ANSSI : partition dédiée)
+# 3. Créer le répertoire de logs (ANSSI : partition dédiée)
 mkdir -p /tmp/log-analyzer
 
-# 5. Démarrer les services
+# 4. Démarrer les services
 docker compose --env-file .env.local up -d
 
-# 6. Télécharger Mistral 7B (première exécution — ~4 Go)
+# 5. Télécharger Mistral 7B (première exécution — ~4 Go)
 # Automatique via le service ollama-init, surveiller avec :
 docker logs log-ollama-init -f
 
-# 7. Vérifier l'état
+# 6. Vérifier l'état
 curl http://localhost:8000/health | jq
 ```
+
+### Activation du mode TLS/mTLS ANSSI
+
+```bash
+# 1. Générer les certificats de labo
+./scripts/gen_certs.sh ./certs
+
+# 2. Peupler le volume Docker 'certs'
+docker run --rm -v $(pwd)/certs:/src -v certs:/dest alpine cp -r /src/. /dest/
+
+# 3. Démarrer Fluent Bit en mode TLS
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
+
+# 4. Vérifier le démarrage (doit montrer l'input syslog sur port 5140)
+docker logs log-fluent-bit --tail 20
+
+# Retour au mode stable si besoin
+docker compose up -d --force-recreate fluent-bit
+```
+
+> Voir [docs/syslog-tls-anssi.md](docs/syslog-tls-anssi.md) pour les procédures complètes de test et de dépannage.
 
 ### Endpoints API
 
@@ -146,6 +179,37 @@ GET  http://localhost:8000/docs
 
 ---
 
+## Dashboards Grafana
+
+Le projet inclut deux dashboards, chargés automatiquement via le provisioning Grafana.
+
+### Dashboard v2 — Observabilité Fluent Bit (recommandé)
+
+Fichier : `config/grafana/dashboards/grafana_anssi_dashboard_v2.json`
+
+Cohérent avec l'état réel de la stack (`job="fluent-bit"`) :
+
+| Panel | Type | Description |
+|---|---|---|
+| Volume de logs (5 min) | Stat | Compteur total de logs reçus |
+| Erreurs détectées (5 min) | Stat | Logs contenant "error" |
+| Tentatives SSH échouées (15 min) | Stat | Logs contenant "Failed password" |
+| Débit de logs | Timeseries | Évolution du volume par minute |
+| Événements sensibles | Timeseries | Erreurs + SSH sur le temps |
+| Logs d'erreur récents | Logs | Affichage brut des erreurs |
+| Logs bruts récents | Logs | Tous les logs Fluent Bit |
+
+**Import manuel** (si le provisioning ne charge pas automatiquement) :
+Grafana → Dashboards → Import → Upload `config/grafana/dashboards/grafana_anssi_dashboard_v2.json` → sélectionner datasource Loki.
+
+### Dashboard v1 — Vue d'ensemble (legacy)
+
+Fichier : `config/grafana/dashboards/log-analyzer-overview.json`
+
+Dépend de PostgreSQL et de données structurées — à utiliser uniquement quand la base est peuplée.
+
+---
+
 ## Développement
 
 ```bash
@@ -169,45 +233,52 @@ mypy src/ --strict
 
 ```
 log-analyzer-anssi/
-├── CLAUDE.md                    # Instructions Claude Code
-├── docker-compose.yml           # Orchestration Docker
-├── Dockerfile                   # Image API
+├── CLAUDE.md                          # Instructions Claude Code
+├── docker-compose.yml                 # Orchestration Docker (mode stable)
+├── docker-compose.tls.yml             # Override Docker Compose pour le mode TLS
+├── Dockerfile                         # Image API
 ├── requirements.txt
 ├── pytest.ini
 ├── src/
 │   ├── langgraph_pipeline/
-│   │   ├── graph.py             # Définition + compilation du graphe
-│   │   ├── nodes.py             # 4 nœuds : normalize, detect, classify, report
-│   │   ├── state.py             # LogAnalysisState (TypedDict)
-│   │   ├── conditions.py        # Routage conditionnel (route_by_risk)
-│   │   └── llm_client.py       # Client Ollama async
+│   │   ├── graph.py                   # Définition + compilation du graphe
+│   │   ├── nodes.py                   # 4 nœuds : normalize, detect, classify, report
+│   │   ├── state.py                   # LogAnalysisState (TypedDict)
+│   │   ├── conditions.py              # Routage conditionnel (route_by_risk)
+│   │   └── llm_client.py             # Client Ollama async
 │   ├── api/
-│   │   ├── main.py              # Application FastAPI
-│   │   ├── schemas.py           # Modèles Pydantic
+│   │   ├── main.py                    # Application FastAPI
+│   │   ├── schemas.py                 # Modèles Pydantic
 │   │   └── routes/
-│   │       ├── analysis.py      # POST /analyze, GET /reports
-│   │       └── health.py        # GET /health
+│   │       ├── analysis.py            # POST /analyze, GET /reports
+│   │       └── health.py              # GET /health
 │   ├── collectors/
-│   │   ├── log_collector.py     # Client Loki async
-│   │   ├── pg_writer.py         # Écriture PostgreSQL async
-│   │   └── integrity.py         # HMAC + rotation + rétention
+│   │   ├── log_collector.py           # Client Loki async
+│   │   ├── pg_writer.py               # Écriture PostgreSQL async
+│   │   └── integrity.py               # HMAC + rotation + rétention
 │   └── models/
-│       ├── log_entry.py         # Modèle log normalisé
-│       └── report.py            # Modèle rapport d'analyse
+│       ├── log_entry.py               # Modèle log normalisé
+│       └── report.py                  # Modèle rapport d'analyse
 ├── config/
-│   ├── fluent-bit.conf          # Config collecte TLS
-│   ├── fluent-bit-parsers.conf  # Parsers (nginx, syslog, json)
-│   ├── loki-config.yml          # Config Loki + rétention
+│   ├── fluent-bit.conf                # Config stable (mode défaut, sans syslog TLS)
+│   ├── fluent-bit-tls.conf            # Config TLS (syslog mTLS activé, port 5140)
+│   ├── fluent-bit-parsers.conf        # Parsers (nginx, syslog, json)
+│   ├── loki-config.yml                # Config Loki + rétention
 │   └── grafana/
-│       ├── provisioning/        # Datasources + dashboards auto
-│       └── dashboards/          # JSON dashboards
+│       ├── provisioning/              # Datasources + dashboards auto
+│       └── dashboards/
+│           ├── grafana_anssi_dashboard_v2.json   # Dashboard Fluent Bit/Loki (recommandé)
+│           └── log-analyzer-overview.json        # Dashboard complet (nécessite PostgreSQL)
+├── docs/
+│   └── syslog-tls-anssi.md           # Documentation technique TLS/mTLS ANSSI
 ├── scripts/
-│   ├── gen_certs.sh             # Génération certificats TLS dev
-│   └── init_db.sql              # Schéma PostgreSQL + pgvector
+│   ├── gen_certs.sh                   # Génération certificats TLS labo
+│   └── init_db.sql                    # Schéma PostgreSQL + pgvector
+├── certs/
+│   └── README.md                      # Structure attendue des certificats
 ├── tests/
-│   ├── unit/                    # Tests nœuds, intégrité, API
-│   └── integration/             # Tests pipeline end-to-end
-└── certs/                       # Certificats TLS (gitignorés)
+│   ├── unit/                          # Tests nœuds, intégrité, API
+│   └── integration/                   # Tests pipeline end-to-end
 ```
 
 ---

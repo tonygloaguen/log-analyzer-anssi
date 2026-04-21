@@ -1,0 +1,32 @@
+---
+# docker-compose.tls.yml — Override Docker Compose pour le mode syslog TLS/mTLS
+#
+# Active l'écoute syslog TCP/TLS sur le port 5140 dans Fluent Bit.
+# À combiner avec docker-compose.yml — NE PAS utiliser seul.
+#
+# PRÉREQUIS :
+#   Le volume Docker nommé 'certs' doit contenir :
+#     ca.crt      — CA racine
+#     server.crt  — certificat serveur Fluent Bit
+#     server.key  — clé privée serveur
+#
+# Génération des certificats de labo :
+#   ./scripts/gen_certs.sh ./certs
+#   docker run --rm -v $(pwd)/certs:/src -v certs:/dest alpine cp -r /src/. /dest/
+#
+# ACTIVATION :
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d fluent-bit
+#
+# RETOUR AU MODE STABLE :
+#   docker compose up -d --force-recreate fluent-bit
+#   (sans le -f docker-compose.tls.yml → fluent-bit.conf par défaut)
+
+services:
+  fluent-bit:
+    volumes:
+      - ./config/fluent-bit-tls.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./config/fluent-bit-parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - log-analyzer-data:/var/log-analyzer
+      - certs:/certs:ro
+    ports:
+      - "5140:5140"    # Syslog TLS input (RFC 5424 over TCP/TLS)

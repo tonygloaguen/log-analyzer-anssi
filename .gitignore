@@ -3,8 +3,8 @@
 .env
 *.key
 *.pem
-certs/
-!certs/.gitkeep
+certs/*
+!certs/README.md
 
 # Python
 __pycache__/

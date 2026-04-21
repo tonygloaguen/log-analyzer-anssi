@@ -203,7 +203,7 @@ jobs:
 
       # Trivy : scan des vulnérabilités dans le filesystem
       - name: "Scan vulnérabilités — filesystem (Trivy)"
-        uses: aquasecurity/trivy-action@0.
+        uses: aquasecurity/trivy-action@0.70.0
         with:
           scan-type: fs
           scan-ref: .

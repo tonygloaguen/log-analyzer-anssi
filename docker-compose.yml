@@ -40,6 +40,7 @@ volumes:
   grafana-data:
   ollama-data:
   certs:
+  kuma-data:
 
 services:
   # ─────────────────────────────────────────────
@@ -135,7 +136,7 @@ services:
   # Ollama + Mistral 7B (LLM local — pas de cloud)
   # ─────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.1.47
     container_name: log-ollama
     restart: always
     volumes:
@@ -161,7 +162,7 @@ services:
     #           capabilities: [gpu]
 
   ollama-init:
-    image: curlimages/curl:latest
+    image: curlimages/curl:8.7.1
     container_name: log-ollama-init
     restart: "no"
     depends_on:
@@ -243,3 +244,43 @@ services:
       loki:
         condition: service_healthy
     logging: *default-logging
+
+  # Node status alive
+
+  prometheus:
+      image: prom/prometheus:v2.51.2
+      container_name: log-prometheus
+      restart: unless-stopped
+      volumes:
+        - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+        - ./config/prometheus/rules:/etc/prometheus/rules:ro
+      ports:
+        - "9090:9090"
+      networks:
+        - analyze-net
+        - collect-net
+      logging: *default-logging
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+
+  node-exporter:
+      image: prom/node-exporter:v1.8.1
+      container_name: log-node-exporter
+      restart: unless-stopped
+      ports:
+        - "9100:9100"
+      networks:
+        - analyze-net
+      logging: *default-logging
+
+  uptime-kuma:
+      image: louislam/uptime-kuma:1.23.13
+      container_name: log-uptime-kuma
+      restart: unless-stopped
+      ports:
+        - "3001:3001"
+      volumes:
+        - kuma-data:/app/data
+      networks:
+        - analyze-net
+      logging: *default-logging

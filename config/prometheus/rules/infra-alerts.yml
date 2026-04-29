@@ -1,0 +1,20 @@
+groups:
+  - name: infra
+    rules:
+      - alert: RPiNodeExporterDown
+        expr: up{job="rpi-node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RPi non joignable"
+          description: "Le node exporter du RPi ne répond plus depuis plus d'une minute."
+
+      - alert: FluentBitDown
+        expr: up{job="fluent-bit"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fluent Bit non joignable"
+          description: "Prometheus ne peut plus scraper Fluent Bit."

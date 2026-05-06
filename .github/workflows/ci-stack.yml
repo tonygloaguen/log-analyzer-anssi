@@ -24,7 +24,7 @@ env:
 jobs:
   stack-validation:
     name: "Validation stack"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -162,7 +162,7 @@ jobs:
   # ── Scans de sécurité ──────────────────────────────────────────────────────
   security-scan:
     name: "Scans de sécurité"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -221,7 +221,7 @@ jobs:
             .
 
       - name: "Scan vulnérabilités — image Docker API (Trivy)"
-        uses: aquasecurity/trivy-action@0.70.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: image
           image-ref: "log-analyzer-api:ci-scan"
